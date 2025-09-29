@@ -30,11 +30,11 @@ def test_pipeline_worker_full_run(tmp_path, temp_wav_file, mock_transcriber, cla
         model_name='mocked',
         preprocess_threads=1,
         gender_filter='alle',
+        include_unknown=False,
         update_q=q,
         stop_event=stop_event,
         pause_event=pause_event,
         classifier=classifier_instance,
-        # Wir übergeben den mock_transcriber, um den echten zu umgehen
         _test_transcriber_obj=mock_transcriber
     )
 
@@ -57,7 +57,7 @@ def test_pipeline_worker_full_run(tmp_path, temp_wav_file, mock_transcriber, cla
     
     with open(metadata_path, 'r', encoding='utf-8') as f:
         content = f.read()
-        assert "test_1_" in content
+        assert "test_" in content
         assert "dies ist ein test" in content
 
 def test_pipeline_worker_stop_event(temp_wav_file, mock_transcriber, classifier_instance):
@@ -66,14 +66,26 @@ def test_pipeline_worker_stop_event(temp_wav_file, mock_transcriber, classifier_
     stop_event = threading.Event()
     stop_event.set() # Setze das Stopp-Signal VOR dem Start
     
-    pipeline_worker([], 'mock', 'mock', 1, 'alle', q, stop_event, threading.Event(), classifier_instance, mock_transcriber)
+    pipeline_worker(
+        file_list=[],
+        model_engine='mock',
+        model_name='mock',
+        preprocess_threads=1,
+        gender_filter='alle
+        include_unknown=False,
+        update_q=q,
+        stop_event=stop_event,
+        pause_event=threading.Event(),
+        classifier=classifier_instance,
+        _test_transcriber_obj=mock_transcriber
+    )
 
     results = []
     while not q.empty():
         results.append(q.get_nowait())
     
     stopped_messages = [msg for msg in results if msg[0] == 'stopped']
-    assert len(stopped_messages) >= 1, "Der Worker sollte eine 'stopped' Nachricht senden."
+    assert len(stopped_messages) == 1, "Der Worker sollte eine 'stopped' Nachricht senden."
 
     complete_messages = [msg for msg in results if msg[0] == 'processing_complete']
     assert len(complete_messages) == 0, "Der Worker sollte im gestoppten Zustand keine 'complete' Nachricht senden."

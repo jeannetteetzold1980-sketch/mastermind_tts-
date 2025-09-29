@@ -163,8 +163,8 @@ class GenderClassifier:
                 return label, conf
             except Exception: pass
         pitch = float(feats[0, 0])
-        if pitch < 170: return "männlich", 0.7
-        elif pitch > 190: return "weiblich", 0.7
+        if pitch < 165: return "männlich", 0.7
+        elif pitch > 185: return "weiblich", 0.7
         else: return "unbekannt", 0.3
     def train(self, file_label_pairs: List[Tuple[str, str]], cv: int = 3) -> Dict:
         if not HAVE_SKLEARN: raise RuntimeError("scikit-learn nicht installiert.")
@@ -237,6 +237,8 @@ def pipeline_worker(
 
     tmp_session, out_session = None, None
     try:
+        if stop_event.is_set():
+            raise InterruptedError()
         gui_log(update_q, "INFO", f"Pipeline startet...")
         session_id = TIMESTAMP
         tmp_session = os.path.join(BASE_OUTPUT_DIR, f"tmp_{session_id}")

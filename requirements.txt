@@ -9,3 +9,4 @@ pytest
 soundfile
 gTTS
 faster-whisper
+pytest-mock

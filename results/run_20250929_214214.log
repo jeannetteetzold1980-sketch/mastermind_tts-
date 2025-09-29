@@ -1,0 +1,10 @@
+[2025-09-29 21:42:15] [INFO] Pipeline startet...
+[2025-09-29 21:42:15] [INFO] Preprocessing fertig, 1 Segmente gefunden.
+[2025-09-29 21:42:15] [INFO] Pipeline startet...
+[2025-09-29 21:42:15] [INFO] Preprocessing fertig, 0 Segmente gefunden.
+[2025-09-29 21:42:15] [ERROR] Fehler in Pipeline: Traceback (most recent call last):
+  File "/workspaces/mastermind_tts-/main.py", line 294, in pipeline_worker
+    if not meta_data: raise ValueError("Keine nutzbaren Segmente nach Transkription übrig.")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: Keine nutzbaren Segmente nach Transkription übrig.
+
