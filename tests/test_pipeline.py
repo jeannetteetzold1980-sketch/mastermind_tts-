@@ -71,7 +71,7 @@ def test_pipeline_worker_stop_event(temp_wav_file, mock_transcriber, classifier_
         model_engine='mock',
         model_name='mock',
         preprocess_threads=1,
-        gender_filter='alle
+        gender_filter='alle',
         include_unknown=False,
         update_q=q,
         stop_event=stop_event,

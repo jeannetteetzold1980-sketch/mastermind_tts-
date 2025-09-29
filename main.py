@@ -163,8 +163,8 @@ class GenderClassifier:
                 return label, conf
             except Exception: pass
         pitch = float(feats[0, 0])
-        if pitch < 165: return "männlich", 0.7
-        elif pitch > 185: return "weiblich", 0.7
+        if pitch < 175: return "männlich", 0.7
+        elif pitch > 195: return "weiblich", 0.7
         else: return "unbekannt", 0.3
     def train(self, file_label_pairs: List[Tuple[str, str]], cv: int = 3) -> Dict:
         if not HAVE_SKLEARN: raise RuntimeError("scikit-learn nicht installiert.")
