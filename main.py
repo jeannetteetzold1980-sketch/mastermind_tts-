@@ -151,7 +151,6 @@ class GenderClassifier:
             f0, _, _ = librosa.pyin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
             valid = f0[~np.isnan(f0)]
             pitch = float(np.mean(valid)) if valid.size > 0 else 150.0
-            print(f"Calculated pitch: {pitch}") # DEBUG
         except Exception: pitch = 150.0
         mfccs = np.mean(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13), axis=1)
         return np.hstack(([pitch], mfccs))
@@ -164,8 +163,8 @@ class GenderClassifier:
                 return label, conf
             except Exception: pass
         pitch = float(feats[0, 0])
-        if pitch < 175: return "männlich", 0.7
-        elif pitch > 195: return "weiblich", 0.7
+        if pitch < 200: return "männlich", 0.7
+        elif pitch > 280: return "weiblich", 0.7
         else: return "unbekannt", 0.3
     def train(self, file_label_pairs: List[Tuple[str, str]], cv: int = 3) -> Dict:
         if not HAVE_SKLEARN: raise RuntimeError("scikit-learn nicht installiert.")
