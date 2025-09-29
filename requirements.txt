@@ -1,0 +1,11 @@
+pydub
+librosa
+numpy
+openai-whisper
+PySimpleGUI
+num2words
+scikit-learn
+pytest
+soundfile
+gTTS
+faster-whisper
