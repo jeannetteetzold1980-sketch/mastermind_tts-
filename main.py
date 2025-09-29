@@ -151,6 +151,7 @@ class GenderClassifier:
             f0, _, _ = librosa.pyin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
             valid = f0[~np.isnan(f0)]
             pitch = float(np.mean(valid)) if valid.size > 0 else 150.0
+            print(f"Calculated pitch: {pitch}") # DEBUG
         except Exception: pitch = 150.0
         mfccs = np.mean(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13), axis=1)
         return np.hstack(([pitch], mfccs))
