@@ -1,4 +1,4 @@
-# TTS-Datensatz-Formatter
+analyse Analysiere das Projekt # TTS-Datensatz-Formatter
 
 Dieses Tool ist eine grafische Benutzeroberfläche (GUI) zur Verarbeitung von Audiodateien, um hochwertige Datensätze für das Training von Text-to-Speech (TTS)-Modellen zu erstellen. Die Pipeline ist darauf ausgelegt, Audiodateien intelligent zu segmentieren, zu filtern, zu bereinigen und zu transkribieren.
 
@@ -49,7 +49,7 @@ Das Skript benötigt die folgenden Python-Bibliotheken:
 
 1.  Starten Sie das Skript über die Kommandozeile:
     ```bash
-    python main1.py
+    python main.py
     ```
 2.  **Dateien hinzufügen**: Fügen Sie Audiodateien (.wav, .mp3, etc.) oder ganze Ordner über den "Hinzufügen"-Button oder per Drag & Drop hinzu.
 3.  **Einstellungen wählen**:
