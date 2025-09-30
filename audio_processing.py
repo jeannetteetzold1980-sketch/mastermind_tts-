@@ -11,7 +11,7 @@ from pydub import AudioSegment, silence
 from scipy.signal import butter, filtfilt
 from scipy.stats import linregress
 
-from config import MAX_SEGMENT_SEC, MIN_DBFS, MIN_SEGMENT_SEC
+
 
 
 def safe_load_audio(path: str, sr: int = 16000) -> Tuple[np.ndarray, int]:
@@ -105,7 +105,10 @@ def _analyze_prosody_at_split(
     return analysis
 
 
-def split_into_segments(audio: AudioSegment, orig_file: str, temp_dir: str) -> List[Dict]:
+def split_into_segments(
+    audio: AudioSegment, orig_file: str, temp_dir: str,
+    min_sec: float, max_sec: float, min_dbfs: int
+) -> List[Dict]:
     """Intelligente Segmentierung basierend auf Stille und Prosodie-Analyse."""
     sr = audio.frame_rate
     samples = np.array(audio.get_array_of_samples()).astype(np.float32) / 32768.0
@@ -119,11 +122,11 @@ def split_into_segments(audio: AudioSegment, orig_file: str, temp_dir: str) -> L
     silent_chunks = silence.detect_silence(
         audio, 
         min_silence_len=min_silence_for_split,
-        silence_thresh=MIN_DBFS
+        silence_thresh=min_dbfs
     )
     
     if not silent_chunks:
-        if MIN_SEGMENT_SEC <= audio.duration_seconds <= MAX_SEGMENT_SEC:
+        if min_sec <= audio.duration_seconds <= max_sec:
              return [{
                 "wav_path": os.path.join(temp_dir, f"{os.path.splitext(os.path.basename(orig_file))[0]}_001.wav"),
                 "segment": audio, "sha": segment_sha1(audio), "orig_file": orig_file, "duration_sec": audio.duration_seconds
@@ -174,9 +177,9 @@ def split_into_segments(audio: AudioSegment, orig_file: str, temp_dir: str) -> L
         split_score = split_points[i]['split_score']
         
         should_merge = False
-        if potential_duration > MAX_SEGMENT_SEC:
+        if potential_duration > max_sec:
             should_merge = False
-        elif current_duration < MIN_SEGMENT_SEC:
+        elif current_duration < min_sec:
             should_merge = True
         elif split_score < MERGE_THRESHOLD:
             should_merge = True
@@ -197,7 +200,7 @@ def split_into_segments(audio: AudioSegment, orig_file: str, temp_dir: str) -> L
         dur = len(seg) / 1000.0
         dbfs = seg.dBFS if seg.duration_seconds > 0 else -100.0
         
-        if MIN_SEGMENT_SEC <= dur <= MAX_SEGMENT_SEC and dbfs > (MIN_DBFS - 5):
+        if min_sec <= dur <= max_sec and dbfs > (min_dbfs - 5):
             sha = segment_sha1(seg)
             fname = f"{base}_{idx+1:03d}_{sha[:8]}.wav"
             out_segs.append({

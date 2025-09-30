@@ -3,6 +3,7 @@ import shutil
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
 
 from audio_processing import (
     preprocess_segment, safe_load_audio, segment_audio, split_into_segments, normalize_text
@@ -13,9 +14,39 @@ from transcription import Transcriber, TranscriptCache
 from utils import gui_log
 
 
+def export_session(session_id: str, meta_data: list, q: queue.Queue = None):
+    """Exports the final metadata and audio files into a ZIP archive."""
+    try:
+        gui_log(q, "INFO", "📦 Starte finalen Export...")
+        out_session = os.path.join(BASE_OUTPUT_DIR, f"session_{session_id}")
+        wavs_out = os.path.join(out_session, "wavs")
+        os.makedirs(wavs_out, exist_ok=True)
+        meta_path = os.path.join(out_session, "metadata.tsv")
+
+        with open(meta_path, "w", encoding="utf-8-sig", newline="") as mf:
+            for item in meta_data:
+                wavname = os.path.basename(item["wav_path"])
+                item['segment'].export(os.path.join(wavs_out, wavname), format="wav")
+                mf.write(f"{wavname}\t{item['transcript']}\n")
+
+        zip_path = shutil.make_archive(out_session, "zip", out_session)
+        shutil.rmtree(out_session)
+        
+        gui_log(q, "INFO", f"✓ Export abgeschlossen: {zip_path}")
+        if q:
+            q.put(("export_finished", zip_path))
+        return zip_path
+    except Exception:
+        tb = traceback.format_exc()
+        gui_log(q, "ERROR", f"Export fehlgeschlagen:\n{tb}")
+        if q:
+            q.put(("export_failed", tb))
+        return None
+
 def pipeline_worker(
     file_list, model_engine, model_name, threads, gender_filter, q, 
-    stop_event, pause_event, classifier: GenderClassifier, session_timestamp: str
+    stop_event, pause_event, classifier: GenderClassifier, session_timestamp: str,
+    advanced_settings: dict
 ):
     """
     Die Haupt-Worker-Funktion, die die gesamte Verarbeitungspipeline für eine Liste von Dateien ausführt.
@@ -63,7 +94,12 @@ def pipeline_worker(
             if stop_event.is_set(): raise InterruptedError()
             try:
                 audio, sr = segment_audio(filepath)
-                segments = split_into_segments(audio, filepath, tmp_session)
+                segments = split_into_segments(
+                    audio, filepath, tmp_session,
+                    min_sec=advanced_settings['min_sec'],
+                    max_sec=advanced_settings['max_sec'],
+                    min_dbfs=advanced_settings['min_dbfs']
+                )
                 all_segments.extend(segments)
                 if segments:
                     gui_log(q, "INFO", f"✓ {os.path.basename(filepath)}: {len(segments)} Segmente gefunden.")
@@ -137,24 +173,9 @@ def pipeline_worker(
         if not meta_data: raise ValueError("Keine nutzbaren Segmente nach Transkription übrig.")
         gui_log(q, "INFO", f"✓ Transkription abgeschlossen: {len(meta_data)} transkribierte Segmente.")
 
-        # SCHRITT 5: EXPORT
-        gui_log(q, "INFO", "📦 SCHRITT 5: Export & ZIP-Erstellung...")
-        out_session = os.path.join(BASE_OUTPUT_DIR, f"session_{session_id}")
-        wavs_out = os.path.join(out_session, "wavs")
-        os.makedirs(wavs_out, exist_ok=True)
-        meta_path = os.path.join(out_session, "metadata.tsv")
-        
-        with open(meta_path, "w", encoding="utf-8-sig", newline="") as mf:
-            for item in meta_data:
-                wavname = os.path.basename(item["wav_path"])
-                item['segment'].export(os.path.join(wavs_out, wavname), format="wav")
-                mf.write(f"{wavname}	{item['transcript']}\n")
-        
-        zip_path = shutil.make_archive(out_session, "zip", out_session)
-        shutil.rmtree(out_session)
-        
-        gui_log(q, "INFO", f"✓ Export abgeschlossen: {zip_path}")
-        q.put(("processing_complete", len(file_list), len(meta_data), len(all_segments) - len(meta_data), zip_path))
+        # SCHRITT 5: ÜBERGABE AN EDITOR
+        gui_log(q, "INFO", "Verarbeitung abgeschlossen. Übergebe Daten an den Editor.")
+        q.put(("processing_complete", meta_data))
 
     except InterruptedError:
         gui_log(q, "INFO", "Prozess vom Benutzer gestoppt.")
@@ -165,6 +186,3 @@ def pipeline_worker(
     finally:
         if tmp_session and os.path.exists(tmp_session):
             shutil.rmtree(tmp_session, ignore_errors=True)
-        # Aufräumen, falls der Prozess gestoppt wurde, bevor das ZIP erstellt wurde
-        if (stop_event and stop_event.is_set() and out_session and os.path.exists(out_session)):
-            shutil.rmtree(out_session, ignore_errors=True)
