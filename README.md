@@ -1,78 +1,79 @@
 # TTS-Datensatz-Formatter
 
-Dieses Tool ist eine grafische Benutzeroberfläche (GUI) zur Verarbeitung von Audio-Dateien, um formatierte Datensätze für das Training von Text-to-Speech (TTS)-Modellen zu erstellen. Die Anwendung segmentiert lange Audio-Dateien, transkribiert die Segmente und erstellt eine Metadaten-Datei, die für TTS-Trainings-Frameworks wie Coqui-TTS oder Tacotron benötigt wird.
+Dieses Tool ist eine grafische Benutzeroberfläche (GUI) zur Verarbeitung von Audiodateien, um hochwertige Datensätze für das Training von Text-to-Speech (TTS)-Modellen zu erstellen. Die Pipeline ist darauf ausgelegt, Audiodateien intelligent zu segmentieren, zu filtern, zu bereinigen und zu transkribieren.
 
 ## Funktionen
 
-- **Grafische Benutzeroberfläche:** Einfach zu bedienende Oberfläche, erstellt mit PySimpleGUI.
-- **Audio-Segmentierung:** Automatisches Aufteilen von langen Audio-Dateien in kürzere Segmente basierend auf Stille.
-- **Hochwertige Transkription:** Nutzt OpenAI's Whisper-Modelle (via `openai-whisper` oder `faster-whisper`) für präzise Transkriptionen.
-- **Geschlechtererkennung:** Filtert Audio-Dateien nach Geschlecht (männlich/weiblich) mithilfe eines trainierbaren Klassifikators.
-- **Kalibrierung der Geschlechtererkennung:** Ermöglicht das Trainieren des Geschlechter-Klassifikators mit eigenen Audio-Beispielen für höhere Genauigkeit.
-- **Caching:** Speichert bereits transkribierte Segmente, um wiederholte Verarbeitung zu vermeiden.
-- **Export:** Gibt einen sauberen Datensatz als ZIP-Archiv aus, das einen `wavs`-Ordner und eine `metadata.tsv`-Datei enthält.
+- **Grafische Benutzeroberfläche**: Einfache Bedienung per Drag & Drop und Klick.
+- **Gender-Filterung**: Automatische Erkennung und Filterung von männlichen und weiblichen Stimmen.
+- **Intelligente Segmentierung**: Teilt Audiodateien basierend auf stillen Pausen und Prosodie-Analyse (Satzmelodie) in optimale Längen (standardmäßig 2.5-12 Sekunden).
+- **Professionelles Audio-Preprocessing**:
+  - Rauschunterdrückung (Spectral Gating)
+  - Normalisierung (Peak & LUFS)
+  - Hochpassfilter zur Entfernung von Störgeräuschen
+  - De-Essing zur Reduzierung von Zischlauten
+  - Automatisches Trimmen von Stille am Anfang und Ende
+- **Qualitätskontrolle**: Verwirft automatisch Segmente mit schlechter Qualität (z.B. niedriges Signal-Rausch-Verhältnis, Clipping).
+- **Transkription**: Nutzt OpenAI Whisper (oder das schnellere `faster-whisper`), um die Audio-Segmente zu transkribieren.
+- **Caching**: Speichert bereits getätigte Transkriptionen, um wiederholte Arbeit zu vermeiden.
+- **Export**: Erstellt ein ZIP-Archiv mit den verarbeiteten `.wav`-Dateien und einer `metadata.tsv`-Datei, die für das TTS-Training bereit ist.
+- **Gender-Kalibrierung**: Ermöglicht das Trainieren eines eigenen Modells zur Geschlechtererkennung für bessere Ergebnisse.
+
+## Anforderungen
+
+Das Skript benötigt die folgenden Python-Bibliotheken:
+
+- `pydub`
+- `librosa`
+- `numpy`
+- `openai-whisper`
+- `PySimpleGUI`
+- `num2words`
+- `scikit-learn`
+- `soundfile`
+- `gTTS`
+- `faster-whisper`
+- `pytest` (für die Entwicklung)
+- `pytest-mock` (für die Entwicklung)
 
 ## Installation
 
-1.  **Repository klonen:**
+1.  Stellen Sie sicher, dass Sie Python 3.8 oder neuer installiert haben.
+2.  Installieren Sie die erforderlichen Bibliotheken mit `pip`:
     ```bash
-    git clone https://github.com/jeannetteetzold1980-sketch/mastermind_tts-
-    cd mastermind_tts-
-    ```
-
-2.  **Abhängigkeiten installieren:**
-    Es wird empfohlen, eine virtuelle Umgebung zu verwenden.
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # Auf Windows: venv\Scripts\activate
     pip install -r requirements.txt
     ```
-
-3.  **FFmpeg installieren:**
-    Für die Audioverarbeitung (Laden und Konvertieren verschiedener Formate) wird `ffmpeg` benötigt. Stellen Sie sicher, dass es in Ihrem System-PATH verfügbar ist.
-
-    -   **Ubuntu/Debian:** `sudo apt update && sudo apt install ffmpeg`
-    -   **macOS (mit Homebrew):** `brew install ffmpeg`
-    -   **Windows:** Laden Sie eine Build von der [offiziellen FFmpeg-Website](https://ffmpeg.org/download.html) herunter und fügen Sie den `bin`-Ordner zu Ihrer `PATH`-Umgebungsvariable hinzu.
+3.  Stellen Sie außerdem sicher, dass `ffmpeg` auf Ihrem System installiert und im System-PATH verfügbar ist. `pydub` benötigt es für die Audioverarbeitung.
 
 ## Verwendung
 
-1.  **Anwendung starten:**
+1.  Starten Sie das Skript über die Kommandozeile:
     ```bash
-    python main.py
+    python main1.py
     ```
+2.  **Dateien hinzufügen**: Fügen Sie Audiodateien (.wav, .mp3, etc.) oder ganze Ordner über den "Hinzufügen"-Button oder per Drag & Drop hinzu.
+3.  **Einstellungen wählen**:
+    - **Whisper Modell**: Wählen Sie die gewünschte Modellgröße (z.B. `small` für einen guten Kompromiss aus Geschwindigkeit und Genauigkeit).
+    - **Engine**: `auto` wählt automatisch die schnellste verfügbare Whisper-Implementierung (`faster-whisper` wird bevorzugt).
+    - **Gender-Filter**: Wählen Sie, ob Sie nur männliche, nur weibliche oder alle Stimmen verarbeiten möchten.
+4.  **Ressourcen laden**: Klicken Sie auf "Ressourcen laden", um das gewählte Whisper-Modell in den Speicher zu laden. Der Start-Button wird danach aktiv.
+5.  **Start**: Klicken Sie auf "Start", um die Verarbeitungspipeline zu beginnen.
+6.  **Ergebnis**: Nach Abschluss des Prozesses finden Sie im `results`-Ordner ein ZIP-Archiv (`session_JJJJMMTT_HHMMSS.zip`), das Ihren fertigen Datensatz enthält.
 
-2.  **Dateien hinzufügen:**
-    -   Klicken Sie auf "Hinzufügen", um Audio-Dateien (z.B. `.wav`, `.mp3`) auszuwählen.
-    -   Oder ziehen Sie Dateien und Ordner per Drag & Drop in die Dateiliste.
+## Die Pipeline-Schritte im Detail
 
-3.  **Einstellungen vornehmen:**
-    -   **Whisper Modell:** Wählen Sie die gewünschte Modellgröße (z.B. `small`, `medium`). Größere Modelle sind genauer, aber langsamer.
-    -   **Engine:** `auto` wählt automatisch die beste verfügbare Whisper-Implementierung (`faster-whisper` wird bevorzugt).
-    -   **Geschlechter-Filter:** Wählen Sie, ob alle, nur männliche oder nur weibliche Stimmen verarbeitet werden sollen.
+1.  **Gender-Filterung**: Wenn ein Filter (männlich/weiblich) aktiv ist, wird jede Datei analysiert und nur die passenden werden für die weiteren Schritte ausgewählt.
+2.  **Segmentierung**: Jede Audiodatei wird auf Basis von stillen Passagen und der Satzmelodie in kleinere Segmente zerlegt. Das Ziel ist es, einzelne Sätze oder Teilsätze zu isolieren.
+3.  **Preprocessing**: Jedes einzelne Segment durchläuft eine Kette von Audio-Filtern, um die Qualität zu maximieren. Segmente, die die Qualitätsprüfung nicht bestehen, werden verworfen.
+4.  **Transkription**: Die hochwertigen Segmente werden mit Whisper transkribiert. Der Text wird normalisiert (Zahlen in Wörter umgewandelt, Satzzeichen entfernt).
+5.  **Export**: Alle erfolgreich verarbeiteten Segmente werden als `.wav`-Dateien zusammen mit einer `metadata.tsv`-Datei in einem ZIP-Archiv gespeichert.
 
-4.  **Ressourcen laden:**
-    -   Klicken Sie auf "Ressourcen laden", um das ausgewählte Whisper-Modell in den Speicher zu laden. Der "Start"-Button wird danach aktiv.
+## Gender-Kalibrierung
 
-5.  **Verarbeitung starten:**
-    -   Klicken Sie auf "Start", um die Segmentierung und Transkription zu beginnen. Der Fortschritt wird in der GUI angezeigt.
-
-6.  **Ergebnis:**
-    -   Nach Abschluss des Prozesses wird eine ZIP-Datei im `results`-Verzeichnis erstellt. Diese Datei enthält die Audio-Segmente und die `metadata.tsv`.
-
-### Gender-Kalibrierung
-
-Wenn die automatische Geschlechtererkennung nicht zuverlässig funktioniert, können Sie das Modell mit Ihren eigenen Daten kalibrieren:
+Wenn die automatische Geschlechtererkennung für Ihr Audiomaterial nicht optimal funktioniert, können Sie ein eigenes Modell trainieren:
 
 1.  Klicken Sie auf "🎙️ Gender-Kalibrierung".
-2.  Laden Sie mehrere Audio-Dateien, die jeweils eine einzelne Person enthalten.
-3.  Wählen Sie die Dateien in der Tabelle aus und weisen Sie ihnen das korrekte Geschlecht ("Als Männlich" / "Als Weiblich") zu.
-4.  Klicken Sie auf "Training starten", wenn Sie genügend Beispiele für beide Geschlechter haben. Das trainierte Modell wird für zukünftige Filterungen verwendet.
-
-## Tests
-
-Um die Funktionalität des Projekts zu überprüfen, können Sie die Test-Suite ausführen:
-
-```bash
-pytest
-```
+2.  Wählen Sie einige Beispiel-Audiodateien aus, die eindeutig männliche oder weibliche Sprecher enthalten.
+3.  Markieren Sie die entsprechenden Dateien in der Tabelle und weisen Sie ihnen über die Buttons "Als Männlich" / "Als Weiblich" das korrekte Geschlecht zu.
+4.  Klicken Sie auf "Training starten". Sie benötigen mindestens 2 Beispiele für jedes Geschlecht.
+5.  Das neu trainierte Modell wird automatisch für zukünftige Filterungen verwendet.
