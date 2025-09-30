@@ -34,6 +34,7 @@ try:
     from pydub import AudioSegment, silence
     from num2words import num2words
     from scipy.signal import butter, filtfilt
+    from scipy.stats import linregress # <-- NEU: Für Prosodie-Analyse
 except ImportError as e:
     show_error_and_exit(f"FEHLER: Eine Kernbibliothek fehlt: {e}\n\nBitte 'pip install -r requirements.txt' ausführen.")
 
@@ -175,125 +176,182 @@ def segment_audio(filepath: str) -> Tuple[AudioSegment, int]:
     except Exception as e:
         raise RuntimeError(f"Audio-Laden fehlgeschlagen: {e}")
 
+def _analyze_prosody_at_split(
+    start_ms: int,
+    f0: np.ndarray,
+    rms: np.ndarray,
+    times: np.ndarray,
+    window_ms: int = 250
+) -> Dict[str, float]:
+    """
+    Analysiert die Prosodie (Tonhöhe & Energie) in einem Fenster vor einem Split-Punkt.
+
+    Args:
+        start_ms: Der Startzeitpunkt der Stille (in ms), vor dem analysiert wird.
+        f0: Array der Grundfrequenz (Pitch) vom gesamten Audio.
+        rms: Array der Energie (RMS) vom gesamten Audio.
+        times: Zeitstempel für die f0- und rms-Frames.
+        window_ms: Größe des Analysefensters in Millisekunden.
+
+    Returns:
+        Ein Dictionary mit Scores für den Pitch- und Energieverlauf.
+        Ein negativer Slope-Wert bedeutet ein Absinken.
+    """
+    analysis = {'pitch_slope': 0.0, 'energy_slope': 0.0}
+    
+    # Finde den Frame-Index, der dem Split-Zeitpunkt am nächsten kommt
+    end_time_sec = start_ms / 1000.0
+    window_sec = window_ms / 1000.0
+    
+    candidate_indices = np.where(times < end_time_sec)[0]
+    if len(candidate_indices) == 0:
+        return analysis # Split ist ganz am Anfang
+        
+    end_idx = candidate_indices[-1]
+    start_idx = np.where(times < (end_time_sec - window_sec))[0]
+    start_idx = start_idx[-1] if len(start_idx) > 0 else 0
+
+    if (end_idx - start_idx) < 4: # Benötigen mind. 4 Datenpunkte für eine sinnvolle Analyse
+        return analysis
+
+    # Extrahiere Pitch- und Energie-Daten im Analysefenster
+    f0_window = f0[start_idx:end_idx]
+    rms_window = rms[start_idx:end_idx].flatten() # sicherstellen, dass es 1D ist
+    time_window = times[start_idx:end_idx]
+    
+    # Ignoriere stimmlose (unvoiced) Abschnitte für Pitch-Analyse
+    voiced_indices = np.where(f0_window > 0)[0]
+    if len(voiced_indices) > 3:
+        f0_voiced = f0_window[voiced_indices]
+        time_voiced = time_window[voiced_indices]
+        # Berechne den linearen Trend (Slope) der Tonhöhe
+        pitch_slope, _, _, _, _ = linregress(time_voiced, f0_voiced)
+        analysis['pitch_slope'] = pitch_slope if not np.isnan(pitch_slope) else 0.0
+
+    # Berechne den linearen Trend (Slope) der Energie
+    energy_slope, _, _, _, _ = linregress(time_window, rms_window)
+    analysis['energy_slope'] = energy_slope if not np.isnan(energy_slope) else 0.0
+
+    return analysis
+
+
 def split_into_segments(audio: AudioSegment, orig_file: str, temp_dir: str) -> List[Dict]:
     """
-    Intelligente Segmentierung basierend auf linguistischen Einheiten.
+    Intelligente Segmentierung basierend auf Stille und Prosodie-Analyse.
     
     Strategie:
-    1. Finde alle Stille-Pausen (potenzielle Splitpunkte)
-    2. Klassifiziere Pausen nach Länge (kurz/mittel/lang)
-    3. Merge Segmente intelligent basierend auf:
-       - Satzgrenzen (lange Pausen)
-       - Atemgruppen (mittlere Pausen)
-       - Zeitlimits (MAX_SEGMENT_SEC)
-    4. Vermeide Schnitte bei kurzen Pausen (innerhalb von Wörtern/Phrasen)
+    1. Konvertiere Audio für die Analyse mit librosa.
+    2. Extrahiere Prosodie-Merkmale: Tonhöhe (f0) und Energie (RMS).
+    3. Finde alle Stille-Pausen (Kandidaten für Splits).
+    4. "Bewerte" jeden Split-Kandidaten basierend auf:
+       a) Dauer der Stille.
+       b) Verlauf von Tonhöhe und Energie *vor* der Stille. Ein starker Abfall
+          deutet auf ein natürliches Satzende hin -> hohe Punktzahl.
+    5. Merge Segmente iterativ, beginnend bei den schwächsten Split-Punkten,
+       bis alle Segmente die Längenkriterien (MIN/MAX) erfüllen.
     """
     
-    # === SCHRITT 1: Finde alle Stille-Pausen ===
-    # Weniger aggressive Erkennung für mehr Kontrolle
-    initial_segments = silence.split_on_silence(
+    # === SCHRITT 1 & 2: Konvertierung und Prosodie-Extraktion ===
+    sr = audio.frame_rate
+    samples = np.array(audio.get_array_of_samples()).astype(np.float32) / 32768.0
+    
+    # Berechne Tonhöhe (f0) und Energie (RMS) für das gesamte Audio
+    f0, _, _ = librosa.pyin(samples, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'), frame_length=1024, hop_length=256)
+    f0 = np.nan_to_num(f0) # Ersetze NaN durch 0
+    rms = librosa.feature.rms(y=samples, frame_length=1024, hop_length=256)[0]
+    times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=256)
+    
+    # === SCHRITT 3: Finde Stille-Pausen (Split-Kandidaten) ===
+    # Aggressivere Erkennung, da wir sie später bewerten und filtern
+    min_silence_for_split = 250 # ms
+    silent_chunks = silence.detect_silence(
         audio, 
-        min_silence_len=300,      # 300ms minimale Stille
-        silence_thresh=MIN_DBFS,
-        keep_silence=150          # Behalte 150ms Stille an Rändern
+        min_silence_len=min_silence_for_split,
+        silence_thresh=MIN_DBFS
     )
     
-    if not initial_segments:
-        initial_segments = [audio]
-    
-    # === SCHRITT 2: Analysiere Pausen zwischen Segmenten ===
-    def get_pause_duration(audio_full: AudioSegment, segments: List[AudioSegment]) -> List[float]:
-        """Berechnet Pausenlängen zwischen Segmenten."""
-        pauses = []
-        current_pos = 0
+    if not silent_chunks: # Keine Pausen gefunden, gesamtes Audio als ein Segment
+        if MIN_SEGMENT_SEC <= audio.duration_seconds <= MAX_SEGMENT_SEC:
+             return [{
+                "wav_path": os.path.join(temp_dir, f"{os.path.splitext(os.path.basename(orig_file))[0]}_001.wav"),
+                "segment": audio, "sha": segment_sha1(audio), "orig_file": orig_file, "duration_sec": audio.duration_seconds
+            }]
+        else:
+            return [] # oder eine andere Fallback-Logik
+
+    # === SCHRITT 4: Bewerte jeden Split-Kandidaten ===
+    split_points = []
+    last_end = 0
+    for start_ms, end_ms in silent_chunks:
+        pause_duration = end_ms - start_ms
         
-        for seg in segments:
-            seg_start = audio_full.find(seg, current_pos)
-            if seg_start > current_pos:
-                pause_ms = seg_start - current_pos
-                pauses.append(pause_ms)
-            else:
-                pauses.append(0)
-            current_pos = seg_start + len(seg)
+        # Analysiere die Prosodie vor der Pause
+        prosody = _analyze_prosody_at_split(start_ms, f0, rms, times)
+        pitch_slope = prosody['pitch_slope']
+        energy_slope = prosody['energy_slope']
         
-        return pauses
+        # Berechne einen Score. Ein guter Split hat eine lange Pause und fallende Prosodie.
+        # Gewichtung: Pausenlänge ist am wichtigsten, dann Pitch, dann Energie.
+        score = (pause_duration / 1000.0) * 1.5 # Gewichteter Score für Pausenlänge
+        if pitch_slope < 0: score += abs(pitch_slope) / 100.0 # Bonus für fallenden Pitch
+        if energy_slope < 0: score += abs(energy_slope) / 20.0 # Kleiner Bonus für fallende Energie
+        
+        split_points.append({
+            'start_segment_ms': last_end,
+            'end_segment_ms': start_ms,
+            'split_score': score,
+            'pause_duration': pause_duration
+        })
+        last_end = end_ms
     
-    # Klassifiziere Pausen
-    pauses = get_pause_duration(audio, initial_segments)
-    
-    # Pause-Kategorien:
-    # - Kurz (< 200ms): Innerhalb von Phrasen/Wörtern → IMMER MERGEN
-    # - Mittel (200-500ms): Atemgruppen → Mergen wenn möglich
-    # - Lang (> 500ms): Satzgrenzen → Bevorzugte Splitpunkte
-    
-    PAUSE_SHORT = 200   # ms
-    PAUSE_MEDIUM = 500  # ms
-    
-    # === SCHRITT 3: Intelligentes Merging ===
+    # Füge das letzte Segment hinzu (nach der letzten Pause)
+    split_points.append({
+        'start_segment_ms': last_end,
+        'end_segment_ms': len(audio),
+        'split_score': 999, # Letzter Split ist "unendlich stark"
+        'pause_duration': 0
+    })
+
+    # === SCHRITT 5: Intelligentes Merging basierend auf Scores ===
     merged_segments = []
-    current_merge = initial_segments[0] if initial_segments else audio
-    current_duration = len(current_merge) / 1000.0
+    if not split_points: return []
     
-    for idx in range(1, len(initial_segments)):
-        seg = initial_segments[idx]
-        pause_before = pauses[idx] if idx < len(pauses) else 0
-        seg_duration = len(seg) / 1000.0
-        potential_duration = current_duration + seg_duration
+    current_merge_start = split_points[0]['start_segment_ms']
+    current_merge_end = split_points[0]['end_segment_ms']
+
+    # Schwellenwert: Splits mit einem Score darunter werden bevorzugt gemerged
+    # Ein Score von 1.0 entspricht ca. 670ms Pause ohne Prosodie-Abfall.
+    MERGE_THRESHOLD = 1.0 
+
+    for i in range(len(split_points) - 1):
+        current_duration = (current_merge_end - current_merge_start) / 1000.0
+        next_segment_duration = (split_points[i+1]['end_segment_ms'] - split_points[i+1]['start_segment_ms']) / 1000.0
+        potential_duration = current_duration + next_segment_duration + (split_points[i]['pause_duration'] / 1000.0)
+        
+        split_score = split_points[i]['split_score']
         
         # Entscheidungslogik für Merge
         should_merge = False
-        
-        # Fall 1: Kurze Pause → IMMER mergen (Wort/Phrasen-Kontinuität)
-        if pause_before < PAUSE_SHORT:
-            should_merge = True
-            merge_reason = "short_pause"
-        
-        # Fall 2: Mittlere Pause + noch Platz → Mergen (Atemgruppe)
-        elif pause_before < PAUSE_MEDIUM and potential_duration < MAX_SEGMENT_SEC * 0.85:
-            should_merge = True
-            merge_reason = "breath_group"
-        
-        # Fall 3: Aktuelles Segment zu kurz → Mergen (Mindestlänge)
+        if potential_duration > MAX_SEGMENT_SEC:
+            should_merge = False # Niemals mergen, wenn es zu lang wird
         elif current_duration < MIN_SEGMENT_SEC:
-            should_merge = True
-            merge_reason = "too_short"
+            should_merge = True # Immer mergen, wenn das aktuelle Segment zu kurz ist
+        elif split_score < MERGE_THRESHOLD:
+            should_merge = True # Mergen, weil es ein "schwacher" Split-Punkt ist
         
-        # Fall 4: Nächstes Segment sehr kurz → Mergen (vermeide Mini-Segmente)
-        elif seg_duration < MIN_SEGMENT_SEC * 0.7:
-            should_merge = True
-            merge_reason = "next_too_short"
-        
-        # Fall 5: Lange Pause aber Zeitlimit überschritten → Nicht mergen
-        elif potential_duration > MAX_SEGMENT_SEC:
-            should_merge = False
-            merge_reason = "time_limit"
-        
-        # Fall 6: Lange Pause → Satzgrenze, nicht mergen
+        if should_merge:
+            # Merge: Erweitere das Ende des aktuellen Segments
+            current_merge_end = split_points[i+1]['end_segment_ms']
         else:
-            should_merge = False
-            merge_reason = "sentence_boundary"
-        
-        if should_merge and potential_duration <= MAX_SEGMENT_SEC:
-            # Merge: Füge Pause + Segment hinzu
-            silence_gap = AudioSegment.silent(duration=int(pause_before))
-            current_merge = current_merge + silence_gap + seg
-            current_duration = len(current_merge) / 1000.0
-        else:
-            # Split: Speichere aktuelles Segment und starte neu
-            if current_duration >= MIN_SEGMENT_SEC:
-                merged_segments.append(current_merge)
-            current_merge = seg
-            current_duration = seg_duration
-    
-    # Füge letztes Segment hinzu
-    if current_duration >= MIN_SEGMENT_SEC:
-        merged_segments.append(current_merge)
-    elif merged_segments:  # Zu kurz → an vorheriges anhängen
-        merged_segments[-1] = merged_segments[-1] + AudioSegment.silent(duration=200) + current_merge
-    else:
-        merged_segments.append(current_merge)
-    
-    # === SCHRITT 4: Post-Processing Quality Check ===
+            # Kein Merge: Speichere das finalisierte Segment und starte ein neues
+            merged_segments.append(audio[current_merge_start:current_merge_end])
+            current_merge_start = split_points[i+1]['start_segment_ms']
+            current_merge_end = split_points[i+1]['end_segment_ms']
+            
+    # Füge das letzte akkumulierte Segment hinzu
+    merged_segments.append(audio[current_merge_start:current_merge_end])
+
+    # === SCHRITT 6: Finale Qualitätsprüfung und Export (wie zuvor) ===
     out_segs = []
     base = os.path.splitext(os.path.basename(orig_file))[0]
     
@@ -301,19 +359,16 @@ def split_into_segments(audio: AudioSegment, orig_file: str, temp_dir: str) -> L
         dur = len(seg) / 1000.0
         dbfs = seg.dBFS if seg.duration_seconds > 0 else -100.0
         
-        # Qualitäts-Check
         if MIN_SEGMENT_SEC <= dur <= MAX_SEGMENT_SEC and dbfs > (MIN_DBFS - 5):
             sha = segment_sha1(seg)
             fname = f"{base}_{idx+1:03d}_{sha[:8]}.wav"
             out_segs.append({
-                "wav_path": os.path.join(temp_dir, fname),
-                "segment": seg,
-                "sha": sha,
-                "orig_file": orig_file,
-                "duration_sec": dur
+                "wav_path": os.path.join(temp_dir, fname), "segment": seg, "sha": sha,
+                "orig_file": orig_file, "duration_sec": dur
             })
     
     return out_segs
+
 
 def preprocess_segment(seg_dict: Dict) -> Dict:
     """
@@ -355,7 +410,6 @@ def preprocess_segment(seg_dict: Dict) -> Dict:
         
         # === 2. HIGH-PASS FILTER (80Hz) ===
         # Entfernt Rumpeln und DC-Offset
-        from scipy.signal import butter, filtfilt
         nyquist = sr / 2
         cutoff = 80 / nyquist
         b, a = butter(4, cutoff, btype='high')
@@ -497,7 +551,7 @@ def pipeline_worker(file_list, model_engine, model_name, threads, gender_filter,
             gui_log(q, "INFO", "Kein Gender-Filter aktiv - alle Dateien werden verarbeitet")
         
         # === SCHRITT 2: SEGMENTIERUNG ===
-        gui_log(q, "INFO", f"📊 SCHRITT 2: Intelligente Audio-Segmentierung (linguistische Einheiten)...")
+        gui_log(q, "INFO", f"📊 SCHRITT 2: Intelligente Audio-Segmentierung (Prosodie-Analyse)...")
         all_segments = []
         segmentation_stats = {
             'total_files': len(filtered_files),
@@ -513,12 +567,14 @@ def pipeline_worker(file_list, model_engine, model_name, threads, gender_filter,
                 segments = split_into_segments(audio, filepath, tmp_session)
                 all_segments.extend(segments)
                 
-                seg_durations = [s.get('duration_sec', 0) for s in segments]
-                avg_dur = np.mean(seg_durations) if seg_durations else 0
-                
-                gui_log(q, "INFO", 
-                       f"✓ {os.path.basename(filepath)}: {len(segments)} Segmente "
-                       f"(Ø {avg_dur:.1f}s, Range: {min(seg_durations):.1f}-{max(seg_durations):.1f}s)")
+                if segments:
+                    seg_durations = [s.get('duration_sec', 0) for s in segments]
+                    avg_dur = np.mean(seg_durations)
+                    gui_log(q, "INFO", 
+                           f"✓ {os.path.basename(filepath)}: {len(segments)} Segmente "
+                           f"(Ø {avg_dur:.1f}s, Range: {min(seg_durations):.1f}-{max(seg_durations):.1f}s)")
+                else:
+                    gui_log(q, "WARN", f"Keine Segmente für {os.path.basename(filepath)} gefunden.")
                 
             except Exception as e:
                 gui_log(q, "WARN", f"Segmentierung fehlgeschlagen für {os.path.basename(filepath)}: {e}")
@@ -707,70 +763,69 @@ def create_main_window():
             [sg.Multiline("", size=(120, 16), key="-LOG-", autoscroll=True, disabled=True)]
         ])]
     ]
-    return sg.Window("TTS Toolkit v12.0 (Optimierte Pipeline)", layout, finalize=True)
+        return sg.Window("TTS Toolkit v12.0 (Optimierte Pipeline)", layout, finalize=True)
     
-def calibration_dialog(classifier: GenderClassifier):
-    layout = [
-        [sg.Text("Gender-Kalibrierung")],
-        [sg.FilesBrowse("Dateien auswählen", key="-CAL_FILES-"), sg.Button("Laden", key="-CAL_LOAD-")],
-        [sg.Table(values=[], headings=["Datei", "Label"], key="-CAL_TABLE-", auto_size_columns=False, col_widths=[80, 12], num_rows=10, select_mode=sg.TABLE_SELECT_MODE_EXTENDED, enable_events=True)],
-        [sg.Button("Als Männlich", key="-CAL_M-"), sg.Button("Als Weiblich", key="-CAL_F-")],
-        [sg.Button("Training starten", key="-CAL_TRAIN-"), sg.Button("Schließen", key="-CAL_CLOSE-")],
-        [sg.Text("", key="-CAL_STATUS-")]
-    ]
-    win = sg.Window("Gender-Kalibrierung", layout, modal=True, finalize=True)
-    files, labels = [], []
-    
-    def refresh_table():
-        rows = [[os.path.basename(files[i]), labels[i]] for i in range(len(files))]
-        win["-CAL_TABLE-"].update(values=rows)
-        m, f, u = labels.count("männlich"), labels.count("weiblich"), labels.count("unlabeled")
-        win["-CAL_STATUS-"].update(f"Markiert: m={m}, w={f}, unmarkiert={u}")
-    
-    while True:
-        event, values = win.read()
-        if event in (sg.WIN_CLOSED, "-CAL_CLOSE-"): 
-            break
+    def calibration_dialog(classifier: GenderClassifier):
+        layout = [
+            [sg.Text("Gender-Kalibrierung")],
+            [sg.FilesBrowse("Dateien auswählen", key="-CAL_FILES-"), sg.Button("Laden", key="-CAL_LOAD-")],
+            [sg.Table(values=[], headings=["Datei", "Label"], key="-CAL_TABLE-", auto_size_columns=False, col_widths=[80, 12], num_rows=10, select_mode=sg.TABLE_SELECT_MODE_EXTENDED, enable_events=True)],
+            [sg.Button("Als Männlich", key="-CAL_M-"), sg.Button("Als Weiblich", key="-CAL_F-")],
+            [sg.Button("Training starten", key="-CAL_TRAIN-"), sg.Button("Schließen", key="-CAL_CLOSE-")],
+            [sg.Text("", key="-CAL_STATUS-")]
+        ]
+        win = sg.Window("Gender-Kalibrierung", layout, modal=True, finalize=True)
+        files, labels = [], []
         
-        if event == "-CAL_LOAD-":
-            raw = values.get("-CAL_FILES-", "")
-            files = [p for p in raw.split(";") if p and os.path.isfile(p)] if raw else []
-            if files:
-                labels = ["unlabeled"] * len(files)
-                refresh_table()
+        def refresh_table():
+            rows = [[os.path.basename(files[i]), labels[i]] for i in range(len(files))]
+            win["-CAL_TABLE-"].update(values=rows)
+            m, f, u = labels.count("männlich"), labels.count("weiblich"), labels.count("unlabeled")
+            win["-CAL_STATUS-"].update(f"Markiert: m={m}, w={f}, unmarkiert={u}")
         
-        elif event in ("-CAL_M-", "-CAL_F-"):
-            sel = values.get("-CAL_TABLE-")
-            if sel:
-                lab = "männlich" if event == "-CAL_M-" else "weiblich"
-                for idx in sel:
-                    labels[idx] = lab
-                refresh_table()
-        
-        elif event == "-CAL_TRAIN-":
-            if not HAVE_SKLEARN:
-                sg.popup_error("scikit-learn ist nicht installiert.")
-                continue
-            
-            pairs = [(files[i], labels[i]) for i in range(len(files)) if labels[i] != "unlabeled"]
-            if sum(1 for _,l in pairs if l=="männlich") < 2 or sum(1 for _,l in pairs if l=="weiblich") < 2:
-                sg.popup_error("Bitte min. 2 Beispiele pro Geschlecht markieren.")
-                continue
-            
-            try:
-                res = classifier.train(pairs)
-                cv_scores, report = res.get("cv_scores", []), res.get("report", {})
-                txt = f"Training abgeschlossen.\nCV Accuracy: {np.mean(cv_scores):.3f}\n\nReport:\n"
-                for cls, metrics in report.items():
-                    if isinstance(metrics, dict):
-                        txt += f"{cls}: P={metrics['precision']:.2f}, R={metrics['recall']:.2f}, F1={metrics['f1-score']:.2f}\n"
-                sg.popup_scrolled(txt, title="Trainingsergebnis")
+        while True:
+            event, values = win.read()
+            if event in (sg.WIN_CLOSED, "-CAL_CLOSE-"): 
                 break
-            except Exception as e:
-                sg.popup_error(f"Fehler: {e}")
-    
-    win.close()
-    
+            
+            if event == "-CAL_LOAD-":
+                raw = values.get("-CAL_FILES-", "")
+                files = [p for p in raw.split(";") if p and os.path.isfile(p)] if raw else []
+                if files:
+                    labels = ["unlabeled"] * len(files)
+                    refresh_table()
+            
+            elif event in ("-CAL_M-", "-CAL_F-"):
+                sel = values.get("-CAL_TABLE-")
+                if sel:
+                    lab = "männlich" if event == "-CAL_M-" else "weiblich"
+                    for idx in sel:
+                        labels[idx] = lab
+                    refresh_table()
+            
+            elif event == "-CAL_TRAIN-":
+                if not HAVE_SKLEARN:
+                    sg.popup_error("scikit-learn ist nicht installiert.")
+                    continue
+                
+                pairs = [(files[i], labels[i]) for i in range(len(files)) if labels[i] != "unlabeled"]
+                if sum(1 for _,l in pairs if l=="männlich") < 2 or sum(1 for _,l in pairs if l=="weiblich") < 2:
+                    sg.popup_error("Bitte min. 2 Beispiele pro Geschlecht markieren.")
+                    continue
+                
+                try:
+                    res = classifier.train(pairs)
+                    cv_scores, report = res.get("cv_scores", []), res.get("report", {})
+                    txt = f"Training abgeschlossen.\nCV Accuracy: {np.mean(cv_scores):.3f}\n\nReport:\n"
+                    for cls, metrics in report.items():
+                        if isinstance(metrics, dict):
+                            txt += f"{cls}: P={metrics['precision']:.2f}, R={metrics['recall']:.2f}, F1={metrics['f1-score']:.2f}\n"
+                    sg.popup_scrolled(txt, title="Trainingsergebnis")
+                    break
+                except Exception as e:
+                    sg.popup_error(f"Fehler: {e}")
+        
+        win.close()    
 def main():
     window = create_main_window()
     window['-FILES-'].bind('<Drop>', '+DRAG_DROP')
