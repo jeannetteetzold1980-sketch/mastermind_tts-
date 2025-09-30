@@ -16,7 +16,7 @@ y_male = np.sin(2 * np.pi * 120 * np.arange(sr) / sr, dtype=np.float32)
 y_female = np.sin(2 * np.pi * 220 * np.arange(sr) / sr, dtype=np.float32)
 
 # Ein Ton im unklaren Bereich
-y_unknown = np.sin(2 * np.pi * 180 * np.arange(sr) / sr, dtype=np.float32)
+y_unknown = np.sin(2 * np.pi * 200 * np.arange(sr) / sr, dtype=np.float32)
 
 def test_classifier_predict_male_fallback(classifier_instance):
     """Testet, ob ein tiefer Ton über die Fallback-Heuristik als männlich erkannt wird."""

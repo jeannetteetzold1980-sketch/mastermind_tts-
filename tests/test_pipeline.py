@@ -28,14 +28,13 @@ def test_pipeline_worker_full_run(tmp_path, temp_wav_file, mock_transcriber, cla
         file_list=file_list,
         model_engine='mocked',
         model_name='mocked',
-        preprocess_threads=1,
+        threads=1,
         gender_filter='alle',
         include_unknown=False,
-        update_q=q,
+        q=q,
         stop_event=stop_event,
         pause_event=pause_event,
-        classifier=classifier_instance,
-        _test_transcriber_obj=mock_transcriber
+        classifier=classifier_instance
     )
 
     results = []
@@ -70,14 +69,13 @@ def test_pipeline_worker_stop_event(temp_wav_file, mock_transcriber, classifier_
         file_list=[],
         model_engine='mock',
         model_name='mock',
-        preprocess_threads=1,
+        threads=1,
         gender_filter='alle',
         include_unknown=False,
-        update_q=q,
+        q=q,
         stop_event=stop_event,
         pause_event=threading.Event(),
-        classifier=classifier_instance,
-        _test_transcriber_obj=mock_transcriber
+        classifier=classifier_instance
     )
 
     results = []

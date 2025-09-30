@@ -5,6 +5,10 @@ import numpy as np
 import os
 import sys
 from pydub import AudioSegment
+import unittest.mock
+
+# Mock PySimpleGUI before it's imported by main
+sys.modules['PySimpleGUI'] = unittest.mock.MagicMock()
 
 # Füge das Hauptverzeichnis zum Pfad hinzu, damit wir 'main' importieren können
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
