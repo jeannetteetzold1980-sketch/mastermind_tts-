@@ -1,10 +1,10 @@
 # tests/test_classifier.py
 
 import numpy as np
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from main import GenderClassifier
 
 # Wir erstellen manuell Testdaten (Signal + Samplerate), um von echten Dateien unabhängig zu sein
 sr = 16000

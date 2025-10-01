@@ -16,7 +16,7 @@ from config import (
     DEFAULT_PREPROCESS_THREADS, WHISPER_MODEL_OPTIONS, BASE_OUTPUT_DIR, MIN_SEGMENT_SEC, MAX_SEGMENT_SEC, MIN_DBFS
 )
 from utils import gui_log, set_log_file
-from gender_classifier import GenderClassifier, HAVE_SKLEARN
+from gender_classifier import GenderClassifier
 from transcription import Transcriber
 from pipeline import pipeline_worker, export_session
 
@@ -382,6 +382,7 @@ def start_gui():
                     sg.popup_error(f"Fehler beim Speichern des Logs: {e}")
     
     if worker_thread and worker_thread.is_alive():
-        if stop_event: stop_event.set()
+        if stop_event:
+            stop_event.set()
         worker_thread.join(timeout=2)
-    window.close()
+    window.close()se()

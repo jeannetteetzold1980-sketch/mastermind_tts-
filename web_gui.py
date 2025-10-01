@@ -7,9 +7,8 @@ import threading
 import queue
 
 # Import your existing pipeline components
-from pipeline import pipeline_worker, export_session
+from pipeline import pipeline_worker
 from gender_classifier import GenderClassifier
-from utils import ConsoleLogHandler # Assuming you want logs in the web UI
 from config import *
 
 eventlet.monkey_patch()

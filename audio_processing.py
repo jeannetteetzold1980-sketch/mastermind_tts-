@@ -143,8 +143,10 @@ def split_into_segments(
         energy_slope = prosody['energy_slope']
         
         score = (pause_duration / 1000.0) * 1.5
-        if pitch_slope < 0: score += abs(pitch_slope) / 100.0
-        if energy_slope < 0: score += abs(energy_slope) / 20.0
+        if pitch_slope < 0:
+            score += abs(pitch_slope) / 100.0
+        if energy_slope < 0:
+            score += abs(energy_slope) / 20.0
         
         split_points.append({
             'start_segment_ms': last_end,
@@ -162,7 +164,8 @@ def split_into_segments(
     })
 
     merged_segments = []
-    if not split_points: return []
+    if not split_points:
+        return []
     
     current_merge_start = split_points[0]['start_segment_ms']
     current_merge_end = split_points[0]['end_segment_ms']
