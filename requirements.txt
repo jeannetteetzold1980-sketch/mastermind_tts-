@@ -14,3 +14,4 @@ matplotlib
 Flask
 Flask-SocketIO
 eventlet
+ruff
