@@ -18,3 +18,12 @@ DEFAULT_PREPROCESS_THREADS: int = max(1, min(8, (os.cpu_count() or 4)))
 MIN_SEGMENT_SEC: float = 2.5
 MAX_SEGMENT_SEC: float = 12.0
 MIN_DBFS: float = -40.0
+
+# Temporäres Verzeichnis für Audio-Segmente
+TEMP_SEGMENT_DIR = "temp_segments"
+
+# Standard-Whisper-Konfiguration (kann in der GUI überschrieben werden)
+WHISPER_MODEL = "small"  # Siehe WHISPER_MODEL_OPTIONS für mehr
+WHISPER_ENGINE = "faster-whisper"  # "whisper" oder "faster-whisper"
+DEVICE = "cpu"  # "cpu" oder "cuda"
+COMPUTE_TYPE = "default"  # siehe https://opennmt.net/CTranslate2/quantization.html
