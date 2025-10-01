@@ -11,3 +11,6 @@ gTTS
 faster-whisper
 pytest-mock
 matplotlib
+Flask
+Flask-SocketIO
+eventlet
