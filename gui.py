@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 # Lokale Modulimporte
 from config import (
-    DEFAULT_PREPROCESS_THREADS, WHISPER_MODEL_OPTIONS, BASE_OUTPUT_DIR, MIN_SEGMENT_SEC, MAX_SEGMENT_SEC, MIN_DBFS
+    DEFAULT_PREPROCESS_THREADS, WHISPER_MODEL_OPTIONS, BASE_OUTPUT_DIR, MIN_SEGMENT_SEC, MAX_SEGMENT_SEC, MIN_DBFS, MIN_SNR_DB
 )
 from utils import gui_log, set_log_file
 from gender_classifier import GenderClassifier
@@ -86,6 +86,7 @@ def create_main_window():
         [sg.Text("Min. Segmentlänge (s):", s=20), sg.Spin([i/10 for i in range(10, 201, 5)], initial_value=MIN_SEGMENT_SEC, resolution=0.5, size=(5,1), key='-MIN_SEC-')],
         [sg.Text("Max. Segmentlänge (s):", s=20), sg.Spin([i for i in range(5, 61)], initial_value=MAX_SEGMENT_SEC, size=(5,1), key='-MAX_SEC-')],
         [sg.Text("Stille-Schwelle (dBFS):", s=20), sg.Spin([i for i in range(-80, -20)], initial_value=MIN_DBFS, size=(5,1), key='-MIN_DBFS-')],
+        [sg.Text("SNR-Schwelle (dB):", s=20), sg.Spin([i for i in range(0, 31)], initial_value=MIN_SNR_DB, size=(5,1), key='-MIN_SNR-')]
     ]
 
     layout = [
@@ -335,6 +336,7 @@ def start_gui():
                     "min_sec": float(values['-MIN_SEC-']),
                     "max_sec": float(values['-MAX_SEC-']),
                     "min_dbfs": int(values['-MIN_DBFS-']),
+                    "min_snr_db": float(values['-MIN_SNR-'])
                 }
             except (ValueError, TypeError):
                 sg.popup_error("Bitte geben Sie gültige Zahlen für die erweiterten Einstellungen ein.")

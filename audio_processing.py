@@ -214,93 +214,112 @@ def split_into_segments(
     return out_segs
 
 
-def preprocess_segment(seg_dict: Dict) -> Dict:
-    """Führt professionelles Audio-Preprocessing für ein einzelnes Segment durch."""
+def preprocess_segment(seg_dict: Dict, min_snr_db: float = 10.0) -> Dict:
+    """Führt ein robustes Audio-Preprocessing und Qualitätsprüfungen für ein Segment durch."""
     try:
         segment = seg_dict['segment']
-        
-        samples = np.array(segment.get_array_of_samples()).astype(np.float32)
-        samples = samples / 32768.0
         sr = segment.frame_rate
-        
-        # 1. Noise Reduction
+        samples = np.array(segment.get_array_of_samples()).astype(np.float32) / 32768.0
+
+        # =============== 1. Audio-Verarbeitung ===============
+
+        # --- Rauschunterdrückung (Spektrale Subtraktion) ---
         stft = librosa.stft(samples, n_fft=2048, hop_length=512)
         magnitude, phase = np.abs(stft), np.angle(stft)
         frame_power = np.mean(magnitude**2, axis=0)
-        noise_threshold = np.percentile(frame_power, 10)
+        noise_threshold = np.percentile(frame_power, 15)
         noise_frames = frame_power < noise_threshold
         noise_profile = np.mean(magnitude[:, noise_frames], axis=1, keepdims=True)
-        magnitude_denoised = np.maximum(magnitude - 1.5 * noise_profile, 0.0)
+        magnitude_denoised = np.maximum(magnitude - 1.2 * noise_profile, 0.0)
         stft_denoised = magnitude_denoised * np.exp(1j * phase)
-        samples = librosa.istft(stft_denoised, hop_length=512, length=len(samples))
-        
-        # 2. High-Pass Filter
+        processed_samples = librosa.istft(stft_denoised, hop_length=512, length=len(samples))
+
+        # --- Hochpassfilter ---
         nyquist = sr / 2
         cutoff = 80 / nyquist
         b, a = butter(4, cutoff, btype='high')
-        samples = filtfilt(b, a, samples)
-        
-        # 3. De-Essing
-        stft = librosa.stft(samples, n_fft=2048, hop_length=512)
-        magnitude, phase = np.abs(stft), np.angle(stft)
+        processed_samples = filtfilt(b, a, processed_samples)
+
+        # --- De-Essing ---
+        stft_deess = librosa.stft(processed_samples, n_fft=2048, hop_length=512)
+        mag_deess, phase_deess = np.abs(stft_deess), np.angle(stft_deess)
         freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
         deess_mask = np.ones_like(freqs)
-        deess_range = (freqs >= 6000) & (freqs <= 10000)
-        deess_mask[deess_range] = 0.6
-        magnitude = magnitude * deess_mask[:, np.newaxis]
-        stft_deessed = magnitude * np.exp(1j * phase)
-        samples = librosa.istft(stft_deessed, hop_length=512, length=len(samples))
-        
-        # 4. Normalisierung
-        peak = np.abs(samples).max()
-        if peak > 0:
-            target_peak = 10 ** (-3 / 20)
-            samples = samples * (target_peak / peak)
-        
-        rms = np.sqrt(np.mean(samples**2))
-        if rms > 0:
-            target_rms = 10 ** (-20 / 20)
-            samples = samples * (target_rms / rms)
-        
-        # 5. Trimming
-        samples, _ = librosa.effects.trim(samples, top_db=40, frame_length=2048, hop_length=512)
-        
-        # 6. Quality Checks
+        deess_range = (freqs >= 5500) & (freqs <= 9500)
+        deess_mask[deess_range] = 0.5
+        mag_deess = mag_deess * deess_mask[:, np.newaxis]
+        stft_deessed = mag_deess * np.exp(1j * phase_deess)
+        processed_samples = librosa.istft(stft_deessed, hop_length=512, length=len(processed_samples))
+
+        # --- RMS-Normalisierung auf -23 dBFS ---
+        rms = np.sqrt(np.mean(processed_samples**2))
+        if rms > 1e-5:
+            target_rms = 10 ** (-23 / 20)
+            processed_samples = processed_samples * (target_rms / rms)
+
+        # --- Soft Limiter ---
+        threshold = 0.98
+        processed_samples = np.tanh(processed_samples / threshold) * threshold
+
+        # --- Stille am Anfang/Ende entfernen ---
+        processed_samples, _ = librosa.effects.trim(processed_samples, top_db=40, frame_length=1024, hop_length=256)
+
+        # =============== 2. Qualitätsprüfungen ===============
         quality_metrics = {}
-        signal_power = np.mean(samples**2)
-        noise_power = np.mean((samples - np.convolve(samples, np.ones(256)/256, mode='same'))**2)
-        snr_db = 10 * np.log10(signal_power / (noise_power + 1e-10))
+
+        # --- SNR-Prüfung (verbessert) ---
+        stft_qual = librosa.stft(processed_samples, n_fft=2048, hop_length=512)
+        mag_qual = np.abs(stft_qual)
+        frame_power_qual = np.mean(mag_qual**2, axis=0)
+        noise_perc = np.percentile(frame_power_qual, 20)
+        
+        noise_power = np.mean(frame_power_qual[frame_power_qual < noise_perc])
+        signal_power = np.mean(frame_power_qual[frame_power_qual >= noise_perc])
+        
+        snr_db = 10 * np.log10(signal_power / (noise_power + 1e-10)) if signal_power > 0 and noise_power > 0 else 0.0
         quality_metrics['snr_db'] = float(snr_db)
-        
-        clipping_samples = np.sum(np.abs(samples) > 0.99)
-        clipping_percent = (clipping_samples / len(samples)) * 100
+
+        if snr_db < min_snr_db:
+            seg_dict.update({'quality_rejected': True, 'reject_reason': f"Low SNR: {snr_db:.1f}dB"})
+            return seg_dict
+
+        # --- Clipping-Prüfung ---
+        clipping_samples = np.sum(np.abs(processed_samples) >= 0.99)
+        clipping_percent = (clipping_samples / len(processed_samples)) * 100 if len(processed_samples) > 0 else 0
         quality_metrics['clipping_percent'] = float(clipping_percent)
-        
-        if snr_db < 10:
-            seg_dict['quality_rejected'] = True
-            seg_dict['reject_reason'] = f"Low SNR: {snr_db:.1f}dB"
+
+        if clipping_percent > 0.2:
+            seg_dict.update({'quality_rejected': True, 'reject_reason': f"Clipping: {clipping_percent:.2f}%"})
             return seg_dict
-        
-        if clipping_percent > 0.5:
-            seg_dict['quality_rejected'] = True
-            seg_dict['reject_reason'] = f"Clipping: {clipping_percent:.2f}%"
+
+        # --- Längenprüfung ---
+        if len(processed_samples) < sr * 1.0:
+            seg_dict.update({'quality_rejected': True, 'reject_reason': "Zu kurz nach Trimming"})
             return seg_dict
-        
-        if len(samples) < sr * 1.0:
-            seg_dict['quality_rejected'] = True
-            seg_dict['reject_reason'] = "Too short after trimming"
+
+        # --- Prüfung auf interne Stille ---
+        non_silent_intervals = librosa.effects.split(processed_samples, top_db=40, frame_length=1024, hop_length=256)
+        speech_duration = sum(end - start for start, end in non_silent_intervals) / sr
+        total_duration = len(processed_samples) / sr
+        silence_ratio = (1 - (speech_duration / total_duration)) if total_duration > 0 else 0
+        quality_metrics['silence_ratio'] = float(silence_ratio)
+
+        if silence_ratio > 0.30:
+            seg_dict.update({'quality_rejected': True, 'reject_reason': f"Zu viel interne Stille: {silence_ratio:.1%}"})
             return seg_dict
-        
-        samples_int16 = (samples * 32767).astype(np.int16)
+
+        # =============== 3. Abschluss ===============
+        samples_int16 = (processed_samples * 32767).astype(np.int16)
         processed_segment = AudioSegment(data=samples_int16.tobytes(), sample_width=2, frame_rate=sr, channels=1)
         
-        seg_dict['segment'] = processed_segment
-        seg_dict['quality_metrics'] = quality_metrics
-        seg_dict['quality_rejected'] = False
+        seg_dict.update({
+            'segment': processed_segment,
+            'quality_metrics': quality_metrics,
+            'quality_rejected': False
+        })
         
         return seg_dict
         
     except Exception as e:
-        seg_dict['quality_rejected'] = True
-        seg_dict['reject_reason'] = f"Processing error: {str(e)}"
+        seg_dict.update({'quality_rejected': True, 'reject_reason': f"Processing error: {str(e)}"})
         return seg_dict

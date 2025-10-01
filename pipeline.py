@@ -118,7 +118,7 @@ def pipeline_worker(
         processed_segments = []
         rejected_count = 0
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            future_to_seg = {executor.submit(preprocess_segment, seg): seg for seg in all_segments}
+            future_to_seg = {executor.submit(lambda seg: preprocess_segment(seg, min_snr_db=advanced_settings.get('min_snr_db', 10.0)), seg): seg for seg in all_segments}
             for i, future in enumerate(as_completed(future_to_seg)):
                 if stop_event.is_set(): raise InterruptedError()
                 try:

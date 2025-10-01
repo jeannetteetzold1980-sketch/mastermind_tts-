@@ -18,6 +18,10 @@ DEFAULT_PREPROCESS_THREADS: int = max(1, min(8, (os.cpu_count() or 4)))
 MIN_SEGMENT_SEC: float = 2.5
 MAX_SEGMENT_SEC: float = 12.0
 MIN_DBFS: float = -40.0
+MIN_SNR_DB: float = 2.0
+MERGE_THRESHOLD: float = 1.0
+PROSODY_PITCH_WEIGHT: float = 100.0
+PROSODY_ENERGY_WEIGHT: float = 20.0
 
 # Temporäres Verzeichnis für Audio-Segmente
 TEMP_SEGMENT_DIR = "temp_segments"
