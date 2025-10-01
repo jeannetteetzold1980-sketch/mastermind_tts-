@@ -34,3 +34,18 @@ def gui_log(q: Optional[queue.Queue], level: str, message: str):
     else:
         # Fallback, wenn keine GUI-Queue vorhanden ist (z.B. für Tests)
         print(line)
+
+def ConsoleLogHandler(q: queue.Queue):
+    """Ein einfacher Log-Handler, der Nachrichten von der Queue liest und in der Konsole ausgibt."""
+    while True:
+        try:
+            message = q.get()
+            if message[0] == "log":
+                print(message[1])
+            elif message[0] in ("export_finished", "processing_complete", "error", "stopped"):
+                # Diese Nachrichten signalisieren das Ende oder einen Fehler, den wir hier nicht behandeln
+                pass
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"[ERROR] Fehler im Log-Handler: {e}")
